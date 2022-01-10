@@ -1,205 +1,199 @@
 #include "function.hpp"
 
 cv::Mat img;
-std::vector<cv::Point> front_lane;
-std::vector<cv::Point> end_lane;
+std::vector <cv::Point> front_lane;
+std::vector <cv::Point> end_lane;
 
 
-void draw_lane(cv::Mat src,std::vector<cv::Point> vertices, cv::Scalar color){
+void draw_reverse_region(const std::string &region) {
 
-    if (vertices.size()>0) {
-        line( src, vertices[0],  vertices[1], color, 2);
-    }
-}
+    int poly[256];
+    int draw_region_step = 0;
+    int length = 0;
 
-bool DoesROIOverlap( cv::Rect boundingbox,std::vector<cv::Point> contour, std::string &res) {
+    if (!fileExists(region)) {
+        std::ifstream url("/home/user/jetson-inference/dbict/control/url.txt");
+        std::string get_url;
+        getline(url, get_url);
+        cv::VideoCapture cap(get_url);
+        std::string winname = "winname";
 
-    //Get the corner points.
-
-    const cv::Point *pts = (const cv::Point*) cv::Mat(contour).data;
-    int npts = cv::Mat(contour).rows;
-    double C_area =cv::contourArea(contour);
-
-    int xCenter = boundingbox.x+(boundingbox.width/2);
-    int yCenter = boundingbox.y+(boundingbox.height/2);
-    float AR =(float)boundingbox.width/(float)boundingbox.height;
-
-    int IntersectionArea = 0;
-
-    int xmin = boundingbox.x;
-    int xmax = boundingbox.x+(boundingbox.width);
-    int ymin = boundingbox.y;
-    int ymax = boundingbox.y+(boundingbox.height);
-
-
-
-    for(float x=xmin; x<xmax;x++){
-        for(float y=ymin; y<ymax;y++){
-            if(cv::pointPolygonTest(cv::Mat(contour), cv::Point2f(x,y), true) > 0)
-                IntersectionArea++;
+        if (!cap.isOpened()) {
+            "VIDEO load failed";
+            exit(0);
         }
-    }
-    int ratio = 100*IntersectionArea/boundingbox.area();
 
-    int ratio_poly = 100*IntersectionArea/(int)C_area;
-    if(boundingbox.area() > C_area*0.8){
-        if(cv::pointPolygonTest(cv::Mat(contour), cv::Point2f(xCenter,yCenter), true) > 0){
-            if(ratio > 40){
-                res =  "Big!" ;
-                return true;
+        cv::namedWindow(winname);
+        cv::Mat draw_img;
+
+
+        while (cap.isOpened()) {
+
+            std::ofstream edit;
+            edit.open("/home/user/jetson-inference/dbict/control/region.txt", std::ios_base::out | std::ios_base::app);
+            int key = cv::waitKey(100);
+
+            cap >> draw_img;
+            cv::waitKey(1);
+
+            std::ostringstream out;
+            out.str("");
+
+            draw_lane(draw_img, front_lane, SCALAR_WHITE);
+            draw_lane(draw_img, end_lane, SCALAR_WHITE);
+
+            if (draw_region_step == 0) {
+                out << "Draw front lane";
+                cv::setMouseCallback(winname, front_onMouse, NULL);
+
+                if (key == 'o') {
+                    for (int i = 0; i < front_lane.size(); i++) {
+                        edit << front_lane[i].x << " " << front_lane[i].y << " ";
+                    }
+                    edit << std::endl;
+                    std::cout << "complete draw front lane" << std::endl;
+
+                    draw_region_step++;
+                } else if (key == 'x') {
+                    front_lane.clear();
+                }
+
+            } else if (draw_region_step == 1) {
+                out << "Draw end lane";
+                cv::setMouseCallback(winname, end_onMouse, NULL);
+
+                if (key == 'o') {
+                    for (int i = 0; i < end_lane.size(); i++) {
+                        edit << end_lane[i].x << " " << end_lane[i].y << " ";
+                    }
+                    draw_region_step++;
+                    cv::destroyWindow(winname);
+                    break;
+                } else if (key == 'x') {
+                    end_lane.clear();
+                }
+            }
+            cv::imshow(winname, draw_img);
+        }
+
+    } else {
+        std::ifstream region_txt("/home/user/jetson-inference/dbict/control/region.txt");
+        while (!region_txt.eof()) {
+
+            std::string position;
+            getline(region_txt, position);
+            std::string *points = new std::string[256];
+
+            points = StringSplit(position, " ");
+            length++;
+
+
+            for (int i = 0; i < sizeof(points) / 2; i++) {
+                poly[i * 2] = atoi(points[i * 2].c_str());
+                poly[i * 2 + 1] = atoi(points[i * 2 + 1].c_str());
+                if (length == 1) {
+                    front_lane.push_back(cv::Point(poly[i * 2], poly[i * 2 + 1]));
+                } else if (length == 2) {
+                    end_lane.push_back(cv::Point(poly[i * 2], poly[i * 2 + 1]));
+                }
             }
         }
-    }
-    if(ratio > 50){
-        if(cv::pointPolygonTest(cv::Mat(contour), cv::Point2f(xCenter,yCenter), true) > 0){
-            res =" ratio: "+std::to_string(C_area)+" ratio:"+std::to_string(ratio_poly) +"% size:"+std::to_string(boundingbox.area())+" intersect:"+std::to_string(IntersectionArea)+" ratio: "+std::to_string(ratio)+"%";
-            return true;
-        }
-    }else{
-        return false;
+        region_txt.close();
     }
 }
 
 
-int DoesROIOverlapCount( cv::Rect boundingbox,int lanes, int &det_line, int &id) {
-    /// object bounding box point ///
-    int xCenter = boundingbox.x+(boundingbox.width/2);
-    int yCenter = boundingbox.y+(boundingbox.height/2);
-    float AR =(float)boundingbox.width/(float)boundingbox.height;
+void draw_lane(cv::Mat src, std::vector <cv::Point> vertices, cv::Scalar color) {
 
-    int IntersectionArea[lanes] = {0,};
-    double lanes_area[lanes] = {0,};
-    double polytest[lanes] = {0,} ;
-    int ratio[lanes] = {0,};
-
-    lanes_area[0] = {cv::contourArea(front_lane)};
-    lanes_area[1] = {cv::contourArea(end_lane)};
-
-    int xmin = boundingbox.x;
-    int xmax = boundingbox.x+(boundingbox.width);
-    int ymin = boundingbox.y;
-    int ymax = boundingbox.y+(boundingbox.height);
-
-    // for(float x=xmin; x<xmax;x++){
-    // 	for(float y=ymin; y<ymax;y++){
-    // 		for(int j=0; j < lanes; j++){
-    // 			if(cv::pointPolygonTest(cv::Mat(RoiVtx[j]), cv::Point2f(xCenter,yCenter), true) > 0){
-    // 				IntersectionArea[j]++;
-    // 			}
-    // 		}
-    // 	}
-    // }
-
-
-    // int lane = 0;
-    // for(int n=0; n < lanes ; n ++){
-    // 	ratio[n] = 100 * IntersectionArea[n] / boundingbox.area();
-    // 	if(boundingbox.area() > lanes_area[n] * 0.8  && ratio[n] > 40 && cv::pointPolygonTest(cv::Mat(RoiVtx[n]), cv::Point2f(xCenter,yCenter), true) > 0){
-    // 		det_line =  n+1;
-    // 		id = objectID;
-    // 		// cout << n+1 << " DET lane IntersectionArea : " << pointPolygonTest(Mat(RoiVt[n]), Point2f(xCenter,yCenter), true) << "     ratio : " << ratio[n]  << " // " << boundingbox.area()<< " // "<< lanes_area[n] <<endl ;
-    // 	}else if(ratio[n] > 50  && (cv::pointPolygonTest(cv::Mat(RoiVtx[n]), cv::Point2f(xCenter,yCenter), true) > 0)){
-    // 		det_line =  n+1;
-    // 		id = objectID;
-    // 		// cout << n+1 << " DET lane IntersectionArea : " << pointPolygonTest(Mat(RoiVt[n]), Point2f(xCenter,yCenter), true) << "     ratio : " << ratio[n] << " // " << boundingbox.area()<< " // "<< lanes_area[n] << endl ;
-    // 	}else{
-    // 		// det_line = 0;
-    // 		// cout << n+1 << " NOT lane IntersectionArea : " << pointPolygonTest(Mat(RoiVt[n]), Point2f(xCenter,yCenter), true) << "     ratio : " << ratio[n] << " // " << boundingbox.area()<< " // "<< lanes_area[n] <<endl ;
-    // 	}
-    // 	// cout << n+1 << "  lane IntersectionArea : " << IntersectionArea[n] << "     ratio : " << ratio[n] << endl ;
-    // 	// return det_line;
-    // }
+    if (vertices.size() > 0) {
+        line(src, vertices[0], vertices[1], color, 2);
+    }
 }
 
-void front_onMouse(int event, int x, int y, int flags, void *userdata){
 
-    if(event == cv::EVENT_LBUTTONDOWN){
+void front_onMouse(int event, int x, int y, int flags, void *userdata) {
+
+    if (event == cv::EVENT_LBUTTONDOWN) {
         front_lane.push_back(cv::Point(x, y));
     }
 }
 
 
-void end_onMouse(int event, int x, int y, int flags, void *userdata){
+void end_onMouse(int event, int x, int y, int flags, void *userdata) {
 
-    if(event == cv::EVENT_LBUTTONDOWN){
+    if (event == cv::EVENT_LBUTTONDOWN) {
         end_lane.push_back(cv::Point(x, y));
     }
 }
 
-extern std::string* StringSplit(std::string strOrigin, std::string strTok){
+extern std::string *StringSplit(std::string strOrigin, std::string strTok) {
     int cutAt;
     int index = 0;
     std::string *strResult = new std::string[256];
 
-    while((cutAt = strOrigin.find_first_of(strTok)) != strOrigin.npos){
-        if(cutAt > 0){
+    while ((cutAt = strOrigin.find_first_of(strTok)) != strOrigin.npos) {
+        if (cutAt > 0) {
             strResult[index++] = strOrigin.substr(0, cutAt);
         }
-        strOrigin = strOrigin.substr(cutAt+1);
+        strOrigin = strOrigin.substr(cutAt + 1);
     }
-    if(strOrigin.length()>0){
+    if (strOrigin.length() > 0) {
         strResult[index++] = strOrigin.substr(0, cutAt);
     }
     return strResult;
 }
 
-bool zero_point_ext(cv::Point begin_point, cv::Point end_point){
 
-    if(begin_point.x == 0 && begin_point.y == 0){
-        return 0;
-    }else if(end_point.x == 0 && end_point.y == 0){
-        return 0;
-    }else{
-        return 1;
-    }
+// extract zero point
+bool zero_point_ext(cv::Point begin_point, cv::Point end_point) {
+
+    if (begin_point.x == 0 && begin_point.y == 0) return 0;
+    else if (end_point.x == 0 && end_point.y == 0) return 0;
+    else return 1;
 }
 
-int ccw(cv::Point p1, cv::Point p2, cv::Point p3){
+int ccw(cv::Point p1, cv::Point p2, cv::Point p3) {
 
     int cross_product = (p2.x - p1.x) * (p3.y - p1.y) - (p3.x - p1.x) * (p2.y - p1.y);
 
-    if(cross_product > 0){
-        return 1;
-    }else if( cross_product < 0){
-        return -1;
-    }else{
-        return 0;
-    }
+    if (cross_product > 0) return 1;
+    else if (cross_product < 0) return -1;
+    else return 0;
 }
-int comparator(cv::Point left, cv::Point right){
+
+int comparator(cv::Point left, cv::Point right) {
     int ret;
-    if(left.x == right.x){
-        ret = (left.y <= right.y);
-    }else{
-        ret = (left.x <= right.x);
-    }
+    if (left.x == right.x) ret = (left.y <= right.y);
+    else ret = (left.x <= right.x);
     return ret;
 }
-void swap_(cv::Point p1, cv::Point p2){
+
+void swap_(cv::Point p1, cv::Point p2) {
     cv::Point temp;
     temp = p1;
     p1 = p2;
     p2 = temp;
 }
-bool LineIntersection(cv::Point x1, cv::Point x2, cv::Point y1, cv::Point y2){
+
+bool LineIntersection(cv::Point x1, cv::Point x2, cv::Point y1, cv::Point y2) {
     int ret;
 
     int l1_l2 = ccw(x1, x2, y1) * ccw(x1, x2, y2);
     int l2_l1 = ccw(y1, y2, x1) * ccw(y1, y2, x2);
-    if(y1.x < 0 || y1.y < 0 || y2.x < 0 || y2.y < 0){
+    if (y1.x < 0 || y1.y < 0 || y2.x < 0 || y2.y < 0) {
         // cout << "ret :  0" << endl;
         return false;
     }
-    if(l1_l2 == 0 && l2_l1 == 0){
-        if(comparator(x2, x1)){
+    if (l1_l2 == 0 && l2_l1 == 0) {
+        if (comparator(x2, x1)) {
             swap(x1, x2);
         }
-        if(comparator(y2, y1)){
+        if (comparator(y2, y1)) {
             swap(y1, y2);
         }
-        ret = (comparator(y1, x2)) && (comparator(x1,y2));
+        ret = (comparator(y1, x2)) && (comparator(x1, y2));
         // cout << "ret : a" << ret <<ret <<ret <<ret <<ret << " " << x1 << x2  << y1  <<y2  << endl ;
-    }else{
+    } else {
         ret = (l1_l2 <= 0) && (l2_l1 <= 0);
         // if(ret)
         // cout << "ret : b" << ret <<ret <<ret <<ret <<ret << " " << x1 <<x2  << y1  << y2 << endl;
@@ -207,3 +201,77 @@ bool LineIntersection(cv::Point x1, cv::Point x2, cv::Point y1, cv::Point y2){
     return ret;
 }
 
+
+void SendStatusValueInToPixel(Mat &image, std::vector <cv::Point> vertices, unsigned char detected, unsigned char LMB,
+                              unsigned char CAN, bool OnSignal, bool OffSignal, unsigned char StdDev) {
+
+    image.at<Vec3b>(0,
+                    0)[0] = detected; // Detected Left Turn Signal                    // Blue in BGR  -> [0,0] point pixel
+    image.at<Vec3b>(0,
+                    0)[1] = LMB;       // On or Off LMB                                // Green in BGR -> [0,0] point pixel
+    image.at<Vec3b>(0,
+                    0)[2] = CAN;      // On or Off CAN                                // Red in BGR   -> [0,0] point pixel
+
+    /*
+     *  Forced On or Off Detect Signal                                                  // Blue in BGR  -> [0,1] point pixel
+     */
+
+    if (!OnSignal && !OffSignal) {
+        image.at<Vec3b>(0, 1)[0] = 0;
+    } else if (OnSignal && !OffSignal) {
+        image.at<Vec3b>(0, 1)[0] = 1;
+    } else {
+        image.at<Vec3b>(0, 1)[0] = 2;
+    }
+
+
+    image.at<Vec3b>(0,1)[1] = StdDev;             // Green in BGR -> [0,1] point pixel
+    image.at<Vec3b>(0,1)[2] = 0;                  // Blue in BGR  -> [0,1] point pixel
+
+    image.at<Vec3b>(0, 2)[0] = 0;
+    image.at<Vec3b>(0, 2)[1] = 0;
+    image.at<Vec3b>(0, 2)[2] = 0;
+
+
+    image.at<Vec3b>(0, 3)[0] = 0;
+    image.at<Vec3b>(0, 3)[1] = 0;
+    image.at<Vec3b>(0, 3)[2] = 0;
+
+    for (int i = 0; i <= vertices.size(); i++) {
+
+        if (vertices[i].x > 100) {
+            image.at<Vec3b>(0, i * 2 + 10)[0] = vertices[i].x / 100;
+            image.at<Vec3b>(0, i * 2 + 10)[1] = (vertices[i].x % 100) / 10;
+            image.at<Vec3b>(0, i * 2 + 10)[2] = (vertices[i].x % 100) % 10;
+
+        } else if (100 > vertices[i].x && vertices[i].x >= 10) {
+            image.at<Vec3b>(0, i * 2 + 10)[0] = 0;
+            image.at<Vec3b>(0, i * 2 + 10)[1] = vertices[i].x / 10;
+            image.at<Vec3b>(0, i * 2 + 10)[2] = vertices[i].x % 10;
+
+        } else {
+            image.at<Vec3b>(0, i * 2 + 10)[0] = 0;
+            image.at<Vec3b>(0, i * 2 + 10)[1] = 0;
+            image.at<Vec3b>(0, i * 2 + 10)[2] = vertices[i].x;
+        }
+
+        if (vertices[i].y > 100) {
+            image.at<Vec3b>(0, i * 2 + 11)[0] = vertices[i].y / 100;
+            image.at<Vec3b>(0, i * 2 + 11)[1] = (vertices[i].y % 100) / 10;
+            image.at<Vec3b>(0, i * 2 + 11)[2] = (vertices[i].y % 100) % 10;
+
+        } else if (100 > vertices[i].y && vertices[i].y >= 10) {
+            image.at<Vec3b>(0, i * 2 + 11)[0] = 0;
+            image.at<Vec3b>(0, i * 2 + 11)[1] = vertices[i].y / 10;
+            image.at<Vec3b>(0, i * 2 + 11)[2] = vertices[i].y % 10;
+
+        } else {
+            image.at<Vec3b>(0, i * 2 + 11)[0] = 0;
+            image.at<Vec3b>(0, i * 2 + 11)[1] = 0;
+            image.at<Vec3b>(0, i * 2 + 11)[2] = vertices[i].y;
+        }
+
+    }
+
+
+}

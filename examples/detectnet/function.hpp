@@ -6,6 +6,7 @@
 #include "opencv2/core.hpp"
 #include "detectNet.h"
 #include "commandLine.h"
+#include "filesystem.h"
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -15,6 +16,7 @@
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #include <signal.h>
+#include <time.h>
 #include <gflags/gflags.h>
 #include <functional>
 #include <iostream>
@@ -44,8 +46,16 @@ using namespace cv;
 using namespace std;
 
 
+const int org_width = 320;  // original video width
+const int org_height = 240; // original video height
 
-class CSharedMemroy
+const int det_width = 320;  // detectnet program video width
+const int det_height = 265; // detectnet program video height
+
+const int one_second = 20;
+const int save_video_fps = 30;
+
+class CSharedMemory
 {
  
 private :
@@ -63,7 +73,7 @@ public :
  
     void setupSharedMemory( int size );
     void attachSharedMemory();
-    void copyToSharedMemory(unsigned int det_code);
+    void copyToSharedMemory(bool det_code);
 //   void close();
 };
 
@@ -84,20 +94,30 @@ std::string to_date();
 
 
 ///// Draw
+void SendStatusValueInToPixel(Mat &image, std::vector <cv::Point> vertices, unsigned char detected, unsigned char LMB,
+                              unsigned char CAN, bool OnSignal, bool OffSignal, unsigned char StdDev);
 
-
-
-///// Draw
-
+void draw_reverse_region(const std::string &region);
 void draw_lane(cv::Mat src,std::vector<cv::Point> vertices, cv::Scalar color);
-bool DoesROIOverlap( cv::Rect boundingbox,std::vector<cv::Point> contour, std::string &res);
-int DoesROIOverlapCount( cv::Rect boundingbox,int lanes, int &det_line, int &id);
+bool zero_point_ext(cv::Point begin_point, cv::Point end_point);
 extern std::string* StringSplit(std::string strOrigin, std::string strTok);
+
 void front_onMouse(int event, int x, int y, int flags, void* userdata);
 void end_onMouse(int event, int x, int y, int flags, void* userdata);
+
 bool intersection(cv::Point o1, cv::Point p1, cv::Point o2, cv::Point p2, cv::Point &r);
 int ccw(cv::Point p1, cv::Point p2, cv::Point p3);
 int comparator(cv::Point left, cv::Point right);
 void swap_(cv::Point p1, cv::Point p2);
 bool LineIntersection(cv::Point x1, cv::Point x2, cv::Point y1, cv::Point y2);
-bool zero_point_ext(cv::Point begin_point, cv::Point end_point);
+
+
+
+/// utility
+
+void stddev_modify(const std::string &std, int &stddev);
+int get_stddev(const std::string &std_file);
+void save_nextvideo(cv::VideoWriter &video, const std::string &record_video_file, const std::string &record_dir_by_date);
+void c_region(const std::string &region, const std::string &std_file);
+bool check_bad_weather(int img_stddev, int get_cfg_stddev, std::ofstream &log_file);
+int tracking_clocks(const bool &is_reverse, std::ostringstream &out);

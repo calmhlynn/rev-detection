@@ -18,7 +18,7 @@ shm = sysv_ipc.SharedMemory(0x1000)
 while True:
     memory = bytearray(shm.read())
 
-    #hex_dump("CAN[%x-%x] :" %(memory[0], memory[1]), memory[128+60:128+64])
+    hex_dump("CAN[%x-%x] :" %(memory[0], memory[1]), memory[128+60:128+64])
    # print(bytes_to_int(memory[128+60:128+64]))
     # print(memory[128+60].print(bytes_to_hex(memory[128+60], memory[128+61], memory[128+62], memory[128+63]))hex())
     

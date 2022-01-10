@@ -25,6 +25,9 @@ sudo cp service/kafka.service /etc/systemd/system/
 sudo cp service/producer.service /etc/systemd/system/
 sudo cp service/consumer.service /etc/systemd/system/
 sudo cp service/uart.service /etc/systemd/system/
+sudo cp service/speak.service /etc/systemd/system/
+sudo cp service/vms.service /etc/systemd/system/
+
 
 echo "complete service settings"
 
@@ -35,11 +38,15 @@ sudo systemctl start kafka
 sudo systemctl start uart
 sudo systemctl start consumer
 sudo systemctl start producer
+sudo systemctl start speak
+sudo systemctl start vms
 sudo systemctl enable zookeeper
 sudo systemctl enable kafka
 sudo systemctl enable uart
 sudo systemctl enable consumer
 sudo systemctl enable producer
+sudo systemctl enable speak
+sudo systemctl enable vms
 
 
 /home/user/kafka_2.13-2.8.0/bin/kafka-topics.sh --create --bootstrap-server localhost:9092 --replication-factor 1 --partitions 1 --topic control

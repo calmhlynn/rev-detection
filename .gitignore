@@ -4,3 +4,6 @@ data/images/test
 logs/
 *.pyc
 *.tar.gz
+.idea/
+dbict/control/region.txt
+dbict/control/url.txt

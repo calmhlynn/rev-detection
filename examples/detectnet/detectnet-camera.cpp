@@ -31,12 +31,15 @@ using namespace std;
 
 // cv::Point ptOld;
 
-
 extern cv::Mat img;
 
 extern string *StringSplit(string strOrigin, string strTok);
 
-extern bool reverse_tracker;
+extern bool is_reverse;
+
+int number_frame = 0;
+int foggy_or_storm_frame = 0;
+int normal_frame = 0;
 
 bool signal_received = false;
 MJPEGWriter test(7777);
@@ -79,6 +82,9 @@ int main(int argc, char **argv) {
      * parse command line
      */
 
+    std::string search_exec_proc = "/home/user/jetson-inference/dbict/control/run";
+    if (fileExists(search_exec_proc)) system("rmdir /home/user/jetson-inference/dbict/control/run");
+
 
 
     commandLine cmdLine(argc, argv);
@@ -99,175 +105,71 @@ int main(int argc, char **argv) {
     //
 
 
-    unsigned char uart = 0;
+    bool uart = 0;
     unsigned char connect_LMB = 0;
     unsigned char connect_CAN = 0;
     unsigned int det_code = 0;
-    int stddev = 0;
-    int car_in_day = 0;
-    int car_in_day2 = 0;
-    int car_in_clock = 0;
-    int car_in_clock2 = 0;
-    int car_in = 0;
-    int detect_in = 0;
+    int reverse_count = 0;
     int trueDetect = 0;
-    int totalframe = 0;
     int notDetect = 0;
     int empty = 0;
-    int foggy_or_storm_frame = 0;
-    int normal_frame = 0;
     int det_err = 0;
     int count = 0;
-    const int one_second = 6;
-
-    int draw_region_step = 0;
-    int length = 0;
+    int reverse_clock = 0;
 
 
-    char fName[100];
-    char gName[100];
-    char sys_rm[100];
+    // init parent directory
+    std::string record_path = "/home/user/record";
+    std::string log_path = "/home/user/detlog";
 
-    std::ifstream region("/home/user/jetson-inference/dbict/control/region.txt");
-
-    /// record
-    std::string record_dir = "/home/user/record/" + to_date();
-    std::string record = "/home/user/record/" + to_date() + '/' + to_hour() + ".mp4";
+    // init record directory
+    std::string record_dir_by_date = record_path + "/" + to_date();                     // ex) /home/user/record/300101
+    std::string record_file_by_date = record_dir_by_date + '/' + to_hour() + ".mp4";    // ex) /home/user/record/300101/00.mp4
 
 
-    /// detected log
-    std::string det_log_pic_dir = "/home/user/detect_log/" + to_date();
-    std::string det_pic = "/home/user/detect_log/" + to_date() + "/" + to_date() + "pic";
-    std::string det_rain_pic = "/home/user/detect_log/" + to_date() + "/" + to_date() + "_rain_pic";
+    // init log & detected pic directory
+    std::string log_dir_by_date = log_path + "/" + to_date();                 // ex) /home/user/detlog/300101
+    std::string pic_dir_by_date = log_dir_by_date + "/pic";                  // ex) /home/user/detlog/300101/pic
 
 
-    std::string prev_run_detectnet = "/home/user/jetson-inference/dbict/control/run";
 
-    ifstream prev_search_run;
-    prev_search_run.open(prev_run_detectnet);
+    if (!fileExists(record_path)) mkdir(record_path.c_str(), 0777);
+    if (!fileExists(log_path)) mkdir(log_path.c_str(), 0777);
+    if (!fileExists(record_dir_by_date)) mkdir(record_dir_by_date.c_str(), 0777);
+    if (!fileExists(log_dir_by_date)) mkdir(log_dir_by_date.c_str(), 0777);
+    if (!fileExists(pic_dir_by_date)) mkdir(pic_dir_by_date.c_str(), 0777);
 
-    if (prev_search_run) {
-        system("rmdir /home/user/jetson-inference/dbict/control/run");
-    }
+
+    std::string ctl_dir = "/home/user/jetson-inference/dbict/control/";
+
+    std::string run_detectnet = ctl_dir + "run";
+    std::string uarton = ctl_dir + "uarton";
+    std::string uartoff = ctl_dir + "uartoff";
+    std::string mod = ctl_dir + "mod";
+    std::string std = ctl_dir + "std";
+    std::string canerr = ctl_dir + "canerr";
+    std::string lmberr = ctl_dir + "lmberr";
 
 
     VideoWriter video;
 
 
-    /// init video file
-    ifstream begin_video_search;
-    begin_video_search.open(record);
-
     cv::Scalar meanValues, stdDevValues;
 
-    CSharedMemroy m;
+    CSharedMemory m;
     m.setKey(0x1000);
-    m.setupSharedMemory(8);
+    m.setupSharedMemory(256);
     m.attachSharedMemory();
 
-    int poly[256];
-
-    if(!region){
-        std::ifstream url("/home/user/jetson-inference/dbict/control/url.txt");
-        std::string get_url;
-        getline(url, get_url);
-
-        cv::VideoCapture cap(get_url);
-
-        std::string winname = "winname";
-
-        if(!cap.isOpened()){
-            "VIDEO load failed";
-            return -1;
-        }
-
-        cv::namedWindow(winname);
-        cv::Mat draw_img;
 
 
-        while(cap.isOpened()){
-
-            std::ofstream edit;
-            edit.open("/home/user/jetson-inference/dbict/control/region.txt", std::ios_base::out | std::ios_base::app);
-            int key = cv::waitKey(100);
-
-            cap >> draw_img;
-            cv::waitKey(1);
-
-            std::ostringstream out;
-            out.str("");
-
-            draw_lane(draw_img, front_lane, SCALAR_WHITE);
-            draw_lane(draw_img, end_lane, SCALAR_WHITE);
-
-            if(draw_region_step == 0){
-                out << "Draw front lane";
-                cv::setMouseCallback(winname, front_onMouse, NULL);
-
-                if(key == 'o'){
-                    for(int i = 0; i < front_lane.size() ; i++){
-                        edit << front_lane[i].x << " " << front_lane[i].y << " ";
-                    }
-                    edit << std::endl ;
-                    std::cout << "complete draw front lane" << std::endl;
-
-                    draw_region_step++;
-                }else if(key == 'x'){
-                    front_lane.clear();
-                }
-
-            }else if(draw_region_step == 1 ){
-                out << "Draw end lane";
-                cv::setMouseCallback(winname, end_onMouse, NULL);
-
-                if(key == 'o'){
-                    for(int i = 0; i < end_lane.size() ; i++){
-                        edit << end_lane[i].x << " " << end_lane[i].y << " ";
-                    }
-                    draw_region_step++;
-                    cv::destroyWindow(winname);
-                    break;
-                }else if(key == 'x'){
-                    end_lane.clear();
-                }
-            }
-            cv::imshow(winname,  draw_img);
-        }
-
-    }else{
-        if(region.is_open()){
-            while(!region.eof()){
-
-                std::string position;
-                getline(region, position);
-                std::string *points = new std::string[256];
-
-                points = StringSplit(position, " ");
-                length++;
+    std::string region("/home/user/jetson-inference/dbict/control/region.txt");
+    draw_reverse_region(region);
 
 
-                for(int i=0; i < sizeof(points) / 2 ; i++){
-                    poly[i*2] = atoi(points[i*2].c_str());
-                    poly[i*2+1] = atoi(points[i*2+1].c_str());
-                    if(length==1){
-                        front_lane.push_back(cv::Point(poly[i*2],poly[i*2+1]));
-                    }else if(length==2){
-                        end_lane.push_back(cv::Point(poly[i*2],poly[i*2+1]));
-                    }
-                }
-            }
-        }
-    }
-    region.close();
+    std::string stdnum("/home/user/jetson-inference/dbict/control/stddev.txt");
+    int stddev = get_stddev(stdnum);
 
-
-    std::ifstream stdnum("/home/user/jetson-inference/dbict/control/stddev.txt");
-    std::string get_std;
-    getline(stdnum, get_std);
-    stddev = stoi(get_std);
-
-
-    region.close();
     if (cmdLine.GetFlag("help"))
         return usage();
 
@@ -326,72 +228,14 @@ int main(int argc, char **argv) {
      * processing loop
      */
 
-    int make_record_dir = mkdir(record_dir.c_str(), 0777);
-    int make_log_pic_dir = mkdir(det_log_pic_dir.c_str(), 0777);
-    int make_det_pic = mkdir(det_pic.c_str(), 0777);
-    int make_det_rain_pic = mkdir(det_rain_pic.c_str(), 0777);
+    save_nextvideo(video, record_file_by_date, record_dir_by_date);
 
-
-    if (!begin_video_search) {
-        cout << "create begin video. time : " << return_current_time_and_date() << endl;
-        video.open(record, VideoWriter::fourcc('a', 'v', 'c', '1'), 30, cv::Size(320, 265), true);
-        begin_video_search.close();
-    } else {
-        FILE *f;
-        FILE *g;
-        strcpy(fName, record.c_str());
-
-        f = fopen(fName, "r");
-        fseek(f, 0, SEEK_END);
-        int fileLength = ftell(f);
-        fclose(f);
-
-        if (fileLength < 100) {
-            string ffname = "rm " + record;
-            // CFile::Remove(ffname);
-            strcpy(sys_rm, ffname.c_str());
-            system(sys_rm);
-            cout << "change file   time : " << return_current_time_and_date() << endl;
-            video.open(record, VideoWriter::fourcc('a', 'v', 'c', '1'), 30, cv::Size(320, 265), true);
-        } else {
-            for (int i = 1; i < 10; i++) {
-                record = "/home/user/record/" + to_date() + "/" + to_hour() + "_" + to_string(i) + ".mp4";
-                ifstream begin_video_search;
-                begin_video_search.open(record);
-
-                if (begin_video_search) {
-                    strcpy(gName, record.c_str());
-
-                    g = fopen(gName, "r");
-                    fseek(g, 0, SEEK_END);
-                    int fileLengths = ftell(g);
-                    fclose(g);
-                    if (fileLengths < 100) {
-                        string ffname = "rm " + record;
-                        strcpy(sys_rm, ffname.c_str());
-                        system(sys_rm);
-                        cout << "create number " << i << " video. time : " << return_current_time_and_date()
-                             << "  remove begin video" << endl;
-                        video.open(record, VideoWriter::fourcc('a', 'v', 'c', '1'), 30, cv::Size(320, 265), true);
-                        begin_video_search.close();
-                        break;
-                    }
-                } else {
-                    cout << "create number " << i << " video. time : " << return_current_time_and_date()
-                         << "  remove begin video" << endl;
-                    video.open(record, VideoWriter::fourcc('a', 'v', 'c', '1'), 30, cv::Size(320, 265), true);
-                    begin_video_search.close();
-                    break;
-                }
-            }
-        }
-    }
 
     float confidence = 0.0f;
     test.start();
     while (!signal_received) {
 
-        reverse_tracker = 0;
+        is_reverse = 0;
 
         bool ForcedSignal = 0;
         bool ForcedNotSignal = 0;
@@ -411,138 +255,61 @@ int main(int argc, char **argv) {
         }
 
 
-        std::string run_detectnet = "/home/user/jetson-inference/dbict/control/run";
-        std::string uart_on = "/home/user/jetson-inference/dbict/control/uart_on";
-        std::string uart_off = "/home/user/jetson-inference/dbict/control/uart_off";
-
-
-        std::string edit_region = "/home/user/jetson-inference/dbict/control/mod";
-        std::string std = "/home/user/jetson-inference/dbict/control/std";
-
-        std::string can_error = "/home/user/jetson-inference/dbict/control/can_error";
-        std::string lmb_error = "/home/user/jetson-inference/dbict/control/lmb_error";
-
-
-        ifstream search_on;
-        search_on.open(uart_on);
-
-        ifstream search_off;
-        search_off.open(uart_off);
-
-        ifstream search_mod;
-        search_mod.open(edit_region);
-
-        ifstream search_std;
-        search_std.open(std);
-
-        ifstream search_can;
-        search_can.open(can_error);
-
-        ifstream search_lmb;
-        search_lmb.open(lmb_error);
-
-        ifstream search_run;
-        search_run.open(run_detectnet);
 
 
 
-        /// record
-        std::string record_dir = "/home/user/record/" + to_date();
-        std::string record = "/home/user/record/" + to_date() + '/' + to_hour() + ".mp4";
+        // init parent directory
+        std::string record_path = "/home/user/record";
+        std::string log_path = "/home/user/detlog";
+
+        // init record directory
+        std::string record_dir_by_date = record_path + "/" + to_date();                     // ex) /home/user/record/300101
+        std::string record_file_by_date = record_dir_by_date + '/' + to_hour() + ".mp4";    // ex) /home/user/record/300101/00.mp4
 
 
-        /// detected log
-        std::string det_log_pic_dir = "/home/user/detect_log/" + to_date();
-        std::string det_pic = "/home/user/detect_log/" + to_date() + "/" + to_date() + "pic";
-        std::string det_rain_pic = "/home/user/detect_log/" + to_date() + "/" + to_date() + "_rain_pic";
-        std::string video_log = "/home/user/detect_log/" + to_date() + '/' + to_hour() + "_log.txt";
+        // init log & detected pic directory
+        std::string log_dir_by_date =
+                log_path + "/" + to_date();                                          // ex) /home/user/detlog/300101
+        std::string pic_dir_by_date = log_dir_by_date + "/pic";                      // ex) /home/user/detlog/300101/pic
+        std::string log_by_date = log_dir_by_date + "/" + to_hour() + "_log.txt";    // ex) /home/user/detlog/300101/00_log.txt
 
 
-        std::ofstream log_every_hours;
-        log_every_hours.open(video_log, std::ios_base::app);
+        std::ofstream log_file;
+        log_file.open(log_by_date, std::ios_base::app);
 
-        bool Object_Detection = false;
-        ///// check File existence /////
-
-        ifstream search_record_dir;
-        search_record_dir.open(record_dir);
-
-        ifstream search_record;
-        search_record.open(record);
+        if (!fileExists(record_path)) mkdir(record_path.c_str(), 0777);
+        if (!fileExists(log_path)) mkdir(log_path.c_str(), 0777);
 
 
-        /////make directory /////
-        if (!search_record_dir) {
-            cout << "The currut time is 00:00" << endl;
-            cout << "Change directory" << endl;
-
-            int make_record_dir = mkdir(record_dir.c_str(), 0777);
-            int make_log_pic_dir = mkdir(det_log_pic_dir.c_str(), 0777);
-            int make_det_pic = mkdir(det_pic.c_str(), 0777);
-            int make_det_rain_pic = mkdir(det_rain_pic.c_str(), 0777);
-
-            system("sudo find /home/user/record/* -mtime +100 -exec rm {} -r \\;");
-            system("sudo find /home/user/detect_log/* -mtime +100 -exec rm {} -r \\;");
-
-            car_in_day = 0;
-            car_in_clock = 0;
-            car_in_day2 = 0;
-            car_in_clock2 = 0;
+        //// make directory
+        if (!fileExists(record_dir_by_date)) {
+            std::cout << "the current time is 00:00" << std::endl;
+            std::cout << "change directory" << std::endl;
+            mkdir(record_dir_by_date.c_str(), 0777);
+            mkdir(log_dir_by_date.c_str(), 0777);
+            mkdir(pic_dir_by_date.c_str(), 0777);
         }
 
-        ///// create video every hours /////
-
-        if (!search_record) {
-            car_in = 0;
-            cout << "The currut time is " << to_time() << endl;
+        ///// create video every hours
+        if (!fileExists(record_file_by_date)) {
+            reverse_count = 0;
+            cout << "The current time is " << to_time() << endl;
             cout << "Change video" << endl;
-            int fourcc = VideoWriter::fourcc('a', 'v', 'c', '1');
-            video.open(record, fourcc, 30, cv::Size(320, 265), true);
+
+            video.open(record_file_by_date, VideoWriter::fourcc('a', 'v', 'c', '1'), 30,
+                       cv::Size(det_width, det_height), true);
 
             if (!video.isOpened()) {
-                cout << to_hour() << ".mp4 out failded" << endl;
+                cout << to_hour() << ".mp4 out failed" << endl;
                 return -1;
             }
         }
 
-        if (search_mod) {
-            std::ifstream region("/home/user/jetson-inference/dbict/control/region.txt");
-            if(region.is_open()){
-                while(!region.eof()){
-
-                    std::string position;
-                    getline(region, position);
-                    std::string *points = new std::string[256];
-
-                    points = StringSplit(position, " ");
-                    length++;
+        c_region(region, mod); // changed region drew
+        stddev_modify(std, stddev);
 
 
-                    for(int i=0; i < sizeof(points) / 2 ; i++){
-                        poly[i*2] = atoi(points[i*2].c_str());
-                        poly[i*2+1] = atoi(points[i*2+1].c_str());
-                        if(length==1){
-                            front_lane.push_back(cv::Point(poly[i*2],poly[i*2+1]));
-                        }else if(length==2){
-                            end_lane.push_back(cv::Point(poly[i*2],poly[i*2+1]));
-                        }
-                    }
-                }
-            }
-            region.close();
-            system("rmdir /home/user/jetson-inference/dbict/control/mod");
-        }
 
-        if (search_std) {
-            std::ifstream std("/home/user/jetson-inference/dbict/control/stddev.txt");
-            std::string get_std;
-            getline(std, get_std);
-            stddev = stoi(get_std);
-            system("rmdir /home/user/jetson-inference/dbict/control/std");
-        }
-
-
-        totalframe++;
 
         bool CarInWaitZone = false;
 
@@ -553,10 +320,6 @@ int main(int argc, char **argv) {
         if (!camera->CaptureRGBA(&imgRGBA, 1000, 1))
             printf("detectnet-camera:  failed to capture RGBA image from camera\n");
 
-        // ////run detectnet /////
-        if (!search_run) {
-            system("mkdir /home/user/jetson-inference/dbict/control/run");
-        }
 
         // detect objects in the frame
         detectNet::Detection *detections = NULL;
@@ -572,31 +335,28 @@ int main(int argc, char **argv) {
 
         meanStdDev(cv_img, meanValues, stdDevValues);
 
+        cv::Mat det_img = cv_img.clone();
+
         float FPS = 1000.0f / net->GetNetworkTime();
 
-        cv::Mat det_capture = cv_img;
+        if (!fileExists(run_detectnet)) mkdir(run_detectnet.c_str(), 0777);
+
 
         if (waitKey(10) == 27) {
             video.release();
             signal_received = true;
         }
 
-
-
         std::string str_stddev = to_string(int(stdDevValues[1]));
+        int img_stddev = int(stdDevValues[1]);
+        std::string normal_pic = pic_dir_by_date + "/" + return_current_time_and_date() + "_" + str_stddev + ".jpg";
 
-        std::string clear_pic;
-        clear_pic = det_pic + "/" + return_current_time_and_date() + "_" + str_stddev + ".jpg";
+        draw_lane(cv_img, front_lane, SCALAR_WHITE);
+        draw_lane(cv_img, end_lane, SCALAR_WHITE);
 
-        std::string bad_pic;
-        bad_pic = det_rain_pic + "/" + return_current_time_and_date() + "_" + str_stddev + ".jpg";
-
+        if (!fileExists(search_exec_proc)) system("mkdir /home/user/jetson-inference/dbict/control/run");
 
 
-//        draw_lane(cv_img, front_lane, SCALAR_WHITE);
-//        draw_lane(cv_img, end_lane, SCALAR_WHITE);
-        // if(totalframe ==0xff)
-        // 	totalframe = 0;
 
         if (numDetections > 0)
         {
@@ -638,10 +398,41 @@ int main(int argc, char **argv) {
 
         out << return_current_time_and_date();
 
-        cv::putText(white_bg, out.str(), cv::Point2f(5, 16), cv::FONT_HERSHEY_COMPLEX, 0.42, cv::Scalar(0, 0, 0));
-        m.copyToSharedMemory(reverse_tracker);
+        duration = static_cast<double>(cv::getTickCount()) - duration;
 
-        cv::resize(cv_img, cv_img, cv::Size(320, 240), 1);
+        duration = duration / cv::getTickFrequency();
+        fps_clock = 1 / duration;
+
+//
+//        reverse_clock = tracking_clocks(is_reverse, out);
+//
+//        std::cout << "reverse_clock : " << reverse_clock << std::endl;
+//
+//
+
+
+        out << "    fps : " << static_cast<int>(fps_clock) ;
+        cv::putText(white_bg, out.str(), cv::Point2f(5, 16), cv::FONT_HERSHEY_COMPLEX, 0.42, cv::Scalar(0, 0, 0));
+
+        if (is_reverse) {
+            count++;
+            if (count == 1) {
+                reverse_count++;
+                std::cout << "reverse count:  " << reverse_count << "  " << return_current_time_and_date() << endl;
+                log_file << "reverse count:  " << reverse_count << "  " << return_current_time_and_date() << endl;
+
+                cv::imwrite(normal_pic, cv_img);
+
+            }
+        }else{
+            count = 0;
+        }
+        if(fileExists(uarton)) is_reverse = true;
+        if(fileExists(uartoff)) is_reverse = false;
+
+        m.copyToSharedMemory(is_reverse);
+
+//        cv::resize(cv_img, cv_img, cv::Size(320, 240), 1);
         cv::vconcat(white_bg, cv_img, last_img);
 
 
@@ -658,12 +449,12 @@ int main(int argc, char **argv) {
         if(update_counter > update_frame){
             update_counter = 0;
         }
-
-        duration = static_cast<double>(cv::getTickCount()) - duration;
-
-        duration = duration / cv::getTickFrequency();
-        fps_clock = 1 / duration;
-//        cout << fps_clock << endl ;
+//
+//        duration = static_cast<double>(cv::getTickCount()) - duration;
+//
+//        duration = duration / cv::getTickFrequency();
+//        fps_clock = 1 / duration;
+//        cout << static_cast<int>(fps_clock) << endl ;
 #if 0
 #endif
 
